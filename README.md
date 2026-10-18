@@ -12,7 +12,7 @@ outside every checkout pass through unchanged.
 ## Install
 
 ```sh
-brew install trev-gulls/tap/git-wt
+brew install tgrnd/tap/git-wt
 ```
 
 Or copy `git-wt` anywhere on your `PATH`; git runs `git-<name>` executables as `git <name>`.
@@ -56,7 +56,7 @@ The hooks need `jq`. Claude Code's cleanup of stale worktrees only looks in
 This repo is also a Claude Code plugin. Its PreToolUse hook rewrites
 `git [options] worktree add …` in Bash tool calls to `git [options] wt add …` with the
 same arguments, so worktrees Claude creates by hand don't nest either. List it in a
-marketplace with `"source": {"source": "github", "repo": "trev-gulls/git-wt"}`, or try it
+marketplace with `"source": {"source": "github", "repo": "tgrnd/git-wt"}`, or try it
 from a checkout with `claude --plugin-dir <path to this repo>`.
 
 - `git-wt` must be on `PATH` (e.g. via Homebrew). Without it the command is left as is

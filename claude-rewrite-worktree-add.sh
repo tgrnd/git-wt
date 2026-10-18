@@ -31,7 +31,7 @@ new=$(printf '%s\n' "$cmd" |
 
 # The rewritten command runs in Claude's Bash tool, so git-wt must be on PATH there.
 if ! command -v git-wt >/dev/null 2>&1; then
-	jq -nc '{systemMessage: "git-wt is not on PATH, so `git worktree add` was left unchanged and may nest the worktree inside the checkout. Install it (brew install trev-gulls/tap/git-wt) or set GIT_WT_REMAP=0 to silence this."}'
+	jq -nc '{systemMessage: "git-wt is not on PATH, so `git worktree add` was left unchanged and may nest the worktree inside the checkout. Install it (brew install tgrnd/tap/git-wt) or set GIT_WT_REMAP=0 to silence this."}'
 	exit 0
 fi
 

@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "Rewrites `git worktree add` in Bash tool calls to `git wt add`, so worktrees never nest inside a checkout",
   "author": { "name": "Trevor Gullstad" },
-  "homepage": "https://github.com/trev-gulls/git-wt",
-  "repository": "https://github.com/trev-gulls/git-wt",
+  "homepage": "https://github.com/tgrnd/git-wt",
+  "repository": "https://github.com/tgrnd/git-wt",
   "keywords": ["git", "worktree", "hooks"]
 }
