@@ -5,5 +5,6 @@
   "author": { "name": "Trevor Gullstad" },
   "homepage": "https://github.com/tgrnd/git-wt",
   "repository": "https://github.com/tgrnd/git-wt",
+  "license": "MIT",
   "keywords": ["git", "worktree", "hooks"]
 }
