@@ -1,0 +1,13 @@
+{
+  "description": "Send git worktree add through git wt add",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/claude-rewrite-worktree-add.sh", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}
