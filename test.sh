@@ -167,12 +167,23 @@ for c in 'git worktree' 'git worktree list' 'git worktree list --porcelain' \
 	'git worktree remove wt/add' 'git worktree remove add' 'git worktree prune' \
 	'git worktree move wt/a wt/add' 'git worktree lock add' 'git worktree unlock wt/a' \
 	'git worktree repair' 'git -C repo worktree remove x' 'git log --grep add worktree' \
-	'git log worktree add' 'git -p worktree add a' 'git --git-dir .git worktree add a' \
+	'git log worktree add' 'git commit -m "worktree add"' 'git worktree list | grep add' \
 	'echo worktree add' 'ls worktree/add' 'git worktrees add a' 'git worktree-add a' \
-	"git worktree add\\
- a"; do
+	'git worktree "add" a' "git worktree list\\
+ add"; do
 	check "left alone: $c" eq "$(rewritten "$c")" '<unchanged>'
 done
+check "short git flags are skipped" eq "$(rewritten 'git -p worktree add a')" 'git -p wt add a'
+check "--git-dir with a separate value is skipped" eq \
+	"$(rewritten 'git --git-dir .git --work-tree=. worktree add a')" 'git --git-dir .git --work-tree=. wt add a'
+check "a continuation after add is kept" eq "$(rewritten "git worktree add\\
+ -b x a")" "git wt add\\
+ -b x a"
+check "continuations between git, options and worktree are allowed" eq "$(rewritten "git \\
+  -C repo \\
+  worktree \\
+  add a")" "git \\
+  -C repo wt add a"
 check "only the add in a list-then-add chain changes" eq \
 	"$(rewritten 'git worktree list && git worktree add a && git worktree prune')" \
 	'git worktree list && git wt add a && git worktree prune'

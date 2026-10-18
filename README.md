@@ -67,10 +67,9 @@ in Bash tool calls to `git [options] wt add …` with the same arguments.
   other `worktree` subcommands, `git wt`, and look-alikes (`git worktrees`, `echo worktree
   add`) pass through untouched (`test.sh` covers each).
 - Matching is textual: `git` must start the command or follow whitespace or `; & | ( {`,
-  so quoted text such as `echo "x; git worktree add"` is rewritten too, and a command
-  split across lines with `\` is not matched. Only `-C`, `-c` and `--long` options before
-  `worktree` are recognised; with others (`-p`, `--git-dir <dir>`) the command is left
-  as is.
+  and only git options (`-C <dir>`, `-c <k=v>`, `--git-dir <dir>`, `-p`, `--long[=value]`…),
+  whitespace and `\` line continuations may sit between `git`, `worktree` and `add`. So
+  quoted text such as `echo "x; git worktree add a"` is rewritten too.
 - `GIT_WT_REMAP=0` in Claude Code's environment turns the rewrite off.
 
 ## Tests
