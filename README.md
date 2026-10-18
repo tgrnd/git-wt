@@ -51,6 +51,25 @@ Add to `~/.claude/settings.json` (Homebrew paths shown; `brew info git-wt` print
 The hooks need `jq`. Claude Code's cleanup of stale worktrees only looks in
 `.claude/worktrees`, so remove relocated ones with `git worktree remove` / `git worktree prune`.
 
+## Claude Code plugin
+
+This repo is also a Claude Code plugin (and its own marketplace). Its PreToolUse hook
+rewrites `git [options] worktree add …` in Bash tool calls to `git [options] wt add …`
+with the same arguments, so worktrees Claude creates by hand don't nest either.
+
+```text
+/plugin marketplace add trev-gulls/git-wt
+/plugin install git-wt@git-wt
+```
+
+- `git-wt` must be on `PATH` (e.g. via Homebrew). Without it the command is left as is
+  and Claude Code shows a message saying why.
+- The rewritten command always asks for approval: Claude Code documents rewritten input
+  only with `allow` (which would bypass your permission rules) or `ask`.
+- Matching is textual: `git worktree add` inside a quoted string is rewritten too, and a
+  command split across lines with `\` is not matched.
+- `GIT_WT_REMAP=0` in Claude Code's environment turns the rewrite off.
+
 ## Tests
 
 ```sh

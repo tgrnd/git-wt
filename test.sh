@@ -142,6 +142,55 @@ check "the repo's only worktree is removed" remove "$pout"
 check "the emptied per-repo folder is pruned" test ! -e "$(dirname "$pout")"
 check "a missing path succeeds" remove "$tmp/nope"
 
+echo '# PreToolUse rewrite hook'
+rewrite() {
+	jq -nc --arg c "$1" '{tool_name: "Bash", tool_input: {command: $c, description: "d", timeout: 5}}' |
+		"$here/claude-rewrite-worktree-add.sh" 2>>"$log"
+}
+rewritten() {
+	out=$(rewrite "$1")
+	if [ -z "$out" ]; then echo '<unchanged>'; else printf '%s' "$out" | jq -r '.hookSpecificOutput.updatedInput.command'; fi
+}
+
+check "git worktree add becomes git wt add" eq \
+	"$(rewritten 'git worktree add -b x wt/x main')" 'git wt add -b x wt/x main'
+check "a chained command is rewritten in place" eq \
+	"$(rewritten 'cd app && git worktree add ../a')" 'cd app && git wt add ../a'
+check "every occurrence is rewritten" eq \
+	"$(rewritten 'git worktree add a;git worktree add b')" 'git wt add a;git wt add b'
+check "git options before the subcommand are kept" eq \
+	"$(rewritten 'git -C "my app" -c core.x=y --no-pager worktree add wt/a')" \
+	'git -C "my app" -c core.x=y --no-pager wt add wt/a'
+check "a trailing bare add is rewritten" eq "$(rewritten 'git worktree add')" 'git wt add'
+check "other worktree subcommands are left alone" eq "$(rewritten 'git worktree list')" '<unchanged>'
+check "git wt add is left alone" eq "$(rewritten 'git wt add wt/a')" '<unchanged>'
+check "a longer word is not matched" eq "$(rewritten 'git worktree addx; mygit worktree add a')" '<unchanged>'
+check "GIT_WT_REMAP=0 disables the rewrite" eq \
+	"$(GIT_WT_REMAP=0 && export GIT_WT_REMAP && rewritten 'git worktree add a')" '<unchanged>'
+check "the rest of tool_input is kept" eq \
+	"$(rewrite 'git worktree add a' | jq -c '.hookSpecificOutput.updatedInput | del(.command)')" '{"description":"d","timeout":5}'
+check "the rewrite asks for approval" eq \
+	"$(rewrite 'git worktree add a' | jq -r '.hookSpecificOutput.permissionDecision')" 'ask'
+check "unrelated commands print nothing" eq "$(rewrite 'ls -la')" ''
+check "input with no command prints nothing" eq \
+	"$(jq -nc '{tool_name: "Read", tool_input: {}}' | "$here/claude-rewrite-worktree-add.sh")" ''
+
+# Run hooks.json's command the way Claude Code does, from a plugin root with a space.
+ln -s "$here" "$tmp/plugin root"
+hookcmd=$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$here/hooks/hooks.json")
+check "hooks.json runs the hook from a plugin root with spaces" eq \
+	"$(jq -nc '{tool_input: {command: "git worktree add a"}}' |
+		CLAUDE_PLUGIN_ROOT="$tmp/plugin root" sh -c "$hookcmd" | jq -r '.hookSpecificOutput.updatedInput.command')" \
+	'git wt add a'
+
+# jq alone, since its usual directory (e.g. /opt/homebrew/bin) may also hold git-wt.
+mkdir "$tmp/jq-only" && ln -s "$(command -v jq)" "$tmp/jq-only/jq"
+nowt=$(PATH=$tmp/jq-only:/usr/bin:/bin && export PATH && rewrite 'git worktree add a')
+check "without git-wt on PATH the command is not rewritten" eq \
+	"$(printf '%s' "$nowt" | jq -r '.hookSpecificOutput.updatedInput // "none"')" 'none'
+check "without git-wt on PATH the user is told why" eq \
+	"$(printf '%s' "$nowt" | jq -r '.systemMessage | test("git-wt")')" 'true'
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 if [ "$fail" -gt 0 ]; then
 	echo '--- log ---'
