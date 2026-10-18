@@ -14,8 +14,8 @@ set -eu
 die() { printf 'claude-worktree-create: %s\n' "$*" >&2; exit 1; }
 log() { printf 'claude-worktree-create: %s\n' "$*" >&2; }
 
-# Prefer the git-wt installed beside this script (Homebrew puts both in libexec);
-# hooks run with whatever PATH Claude Code was started with.
+# Prefer the git-wt beside this script (the plugin ships both); hooks run with
+# whatever PATH Claude Code was started with.
 PATH=$(cd "$(dirname "$0")" && pwd -P):$PATH
 command -v jq >/dev/null 2>&1 || die "jq is required"
 command -v git-wt >/dev/null 2>&1 || die "git-wt is not beside this hook or on PATH"

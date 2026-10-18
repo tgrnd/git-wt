@@ -183,6 +183,16 @@ check "hooks.json runs the hook from a plugin root with spaces" eq \
 		CLAUDE_PLUGIN_ROOT="$tmp/plugin root" sh -c "$hookcmd" | jq -r '.hookSpecificOutput.updatedInput.command')" \
 	'git wt add a'
 
+# The plugin is self-contained: its WorktreeCreate hook uses the git-wt beside it.
+createcmd=$(jq -r '.hooks.WorktreeCreate[0].hooks[0].command' "$here/hooks/hooks.json")
+removecmd=$(jq -r '.hooks.WorktreeRemove[0].hooks[0].command' "$here/hooks/hooks.json")
+pcreated=$(jq -nc --arg cwd "$repo" '{session_id: "s", transcript_path: "/dev/null", cwd: $cwd, name: "via-plugin"}' |
+	PATH=$orig_path CLAUDE_PLUGIN_ROOT="$tmp/plugin root" sh -c "$createcmd" 2>>"$log")
+check "hooks.json WorktreeCreate works without git-wt on PATH" eq "$pcreated" "$bucket/via-plugin"
+jq -nc --arg p "$pcreated" '{worktree_path: $p}' |
+	CLAUDE_PLUGIN_ROOT="$tmp/plugin root" sh -c "$removecmd" 2>>"$log"
+check "hooks.json WorktreeRemove removes it" test ! -e "$pcreated"
+
 # jq alone, since its usual directory (e.g. /opt/homebrew/bin) may also hold git-wt.
 mkdir "$tmp/jq-only" && ln -s "$(command -v jq)" "$tmp/jq-only/jq"
 nowt=$(PATH=$tmp/jq-only:/usr/bin:/bin && export PATH && rewrite 'git worktree add a')
