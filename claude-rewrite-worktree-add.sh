@@ -7,8 +7,9 @@
 # updatedInput only with "allow" (which would skip your permission rules) or "ask",
 # so you see and approve the rewritten command. Prints nothing when nothing changes.
 #
-# Matching is textual: an occurrence inside a quoted string (echo "git worktree add")
-# is rewritten too, and a command split across lines with \ is not matched.
+# Matching is textual: `git` must start the command or follow whitespace or one of
+# ; & | ( {, so quoted text such as echo "x; git worktree add" is rewritten too, and
+# a command split across lines with \ is not matched.
 set -eu
 
 die() { printf 'claude-rewrite-worktree-add: %s\n' "$*" >&2; exit 1; }

@@ -63,8 +63,14 @@ in Bash tool calls to `git [options] wt add …` with the same arguments.
   shows a message saying why.
 - The rewritten command always asks for approval: Claude Code documents rewritten input
   only with `allow` (which would bypass your permission rules) or `ask`.
-- Matching is textual: `git worktree add` inside a quoted string is rewritten too, and a
-  command split across lines with `\` is not matched.
+- The hook runs on every Bash command but changes only `git [options] worktree add`;
+  other `worktree` subcommands, `git wt`, and look-alikes (`git worktrees`, `echo worktree
+  add`) pass through untouched (`test.sh` covers each).
+- Matching is textual: `git` must start the command or follow whitespace or `; & | ( {`,
+  so quoted text such as `echo "x; git worktree add"` is rewritten too, and a command
+  split across lines with `\` is not matched. Only `-C`, `-c` and `--long` options before
+  `worktree` are recognised; with others (`-p`, `--git-dir <dir>`) the command is left
+  as is.
 - `GIT_WT_REMAP=0` in Claude Code's environment turns the rewrite off.
 
 ## Tests

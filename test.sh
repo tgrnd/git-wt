@@ -162,7 +162,26 @@ check "git options before the subcommand are kept" eq \
 	"$(rewritten 'git -C "my app" -c core.x=y --no-pager worktree add wt/a')" \
 	'git -C "my app" -c core.x=y --no-pager wt add wt/a'
 check "a trailing bare add is rewritten" eq "$(rewritten 'git worktree add')" 'git wt add'
-check "other worktree subcommands are left alone" eq "$(rewritten 'git worktree list')" '<unchanged>'
+# The hook sees every Bash command; only `git [opts] worktree add` may change.
+for c in 'git worktree' 'git worktree list' 'git worktree list --porcelain' \
+	'git worktree remove wt/add' 'git worktree remove add' 'git worktree prune' \
+	'git worktree move wt/a wt/add' 'git worktree lock add' 'git worktree unlock wt/a' \
+	'git worktree repair' 'git -C repo worktree remove x' 'git log --grep add worktree' \
+	'git log worktree add' 'git -p worktree add a' 'git --git-dir .git worktree add a' \
+	'echo worktree add' 'ls worktree/add' 'git worktrees add a' 'git worktree-add a' \
+	"git worktree add\\
+ a"; do
+	check "left alone: $c" eq "$(rewritten "$c")" '<unchanged>'
+done
+check "only the add in a list-then-add chain changes" eq \
+	"$(rewritten 'git worktree list && git worktree add a && git worktree prune')" \
+	'git worktree list && git wt add a && git worktree prune'
+check "a subshell or pipe start is a command boundary" eq \
+	"$(rewritten '(git worktree add a) | cat')" '(git wt add a) | cat'
+check "a quoted string starting with git is left alone" eq \
+	"$(rewritten 'echo "git worktree add a"')" '<unchanged>'
+check "known limit: quoted text after a separator is rewritten" eq \
+	"$(rewritten 'echo "x; git worktree add a"')" 'echo "x; git wt add a"'
 check "git wt add is left alone" eq "$(rewritten 'git wt add wt/a')" '<unchanged>'
 check "a longer word is not matched" eq "$(rewritten 'git worktree addx; mygit worktree add a')" '<unchanged>'
 check "GIT_WT_REMAP=0 disables the rewrite" eq \
