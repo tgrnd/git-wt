@@ -1,0 +1,131 @@
+#!/bin/sh
+# git-wt: `git worktree add` that never nests a worktree inside a checkout.
+#
+# A worktree created inside the repo (e.g. <repo>/.claude/worktrees/x or <repo>/wt/x),
+# or inside one of its linked worktrees, is moved to
+# $GIT_WT_HOME/<repo>-<hash>/<path relative to that checkout>, so tools that walk up
+# the tree (Node module resolution, workspace detection, config lookup) never see an
+# outer checkout. Paths outside every checkout pass through unchanged.
+#
+# Usage:
+#   git wt add [<git worktree add options>] <path> [<commit-ish>]
+#   git wt path <path>        print where <path> would be remapped to
+#
+# Env:
+#   GIT_WT_HOME    base for remapped worktrees (default: ~/.claude/.worktrees)
+#   GIT_WT_REMAP   set to 0 to pass every path through unchanged
+set -eu
+
+die() { printf 'git-wt: %s\n' "$*" >&2; exit 1; }
+log() { printf 'git-wt: %s\n' "$*" >&2; }
+
+usage() {
+	cat >&2 <<-EOF
+	usage: git wt add [<git worktree add options>] <path> [<commit-ish>]
+	       git wt path <path>
+	EOF
+	exit 2
+}
+
+# Absolute, symlink-resolved form of $1, which need not exist yet: resolve the
+# deepest existing ancestor with `pwd -P` and append the rest lexically.
+resolve() {
+	case $1 in /*) p=$1 ;; *) p=$PWD/$1 ;; esac
+	rest=
+	while [ ! -d "$p" ]; do
+		rest=/$(basename "$p")$rest
+		p=$(dirname "$p")
+	done
+	printf '%s%s\n' "$(cd "$p" && pwd -P)" "$rest"
+}
+
+# Main checkout root, also when run from inside a linked worktree.
+main_root() {
+	common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
+		die "not inside a git repository: $PWD"
+	[ "$(basename "$common")" = .git ] || die "bare repositories are not supported: $common"
+	(cd "$(dirname "$common")" && pwd -P)
+}
+
+# The checkout containing $1 (main checkout or any linked worktree), or nothing.
+containing_checkout() {
+	git worktree list --porcelain | sed -n 's/^worktree //p' | while IFS= read -r wt; do
+		[ -d "$wt" ] || continue
+		wt=$(cd "$wt" && pwd -P)
+		case $1 in "$wt"/*)
+			printf '%s\n' "$wt"
+			break
+			;;
+		esac
+	done
+}
+
+# Print the remapped location for worktree path $1.
+remap() {
+	target=$(resolve "$1")
+	case $target in *'/../'* | *'/..' | *'/./'* | *'/.') die "path must not contain . or .. segments: $1" ;; esac
+	if [ "${GIT_WT_REMAP:-1}" = 0 ]; then
+		printf '%s\n' "$target"
+		return
+	fi
+	root=$(main_root)
+	checkout=$(containing_checkout "$target")
+	if [ -z "$checkout" ]; then
+		printf '%s\n' "$target"
+		return
+	fi
+	rel=${target#"$checkout"/}
+	rel=${rel#.claude/worktrees/}
+	hash=$(printf '%s' "$root" | shasum | cut -c1-8)
+	printf '%s/%s-%s/%s\n' "${GIT_WT_HOME:-$HOME/.claude/.worktrees}" "$(basename "$root")" "$hash" "$rel"
+}
+
+cmd_add() {
+	# Find the <path> operand: the first non-option argument. Options that take a
+	# separate value must skip it, or the value would be mistaken for the path.
+	n=0 index=0 skip=0 opts_done=0
+	for arg do
+		n=$((n + 1))
+		if [ "$skip" = 1 ]; then
+			skip=0
+			continue
+		fi
+		if [ "$opts_done" = 0 ]; then
+			case $arg in
+			--) opts_done=1; continue ;;
+			-b | -B | --reason) skip=1; continue ;;
+			-?*) continue ;;
+			esac
+		fi
+		index=$n
+		break
+	done
+	[ "$index" -gt 0 ] || usage
+
+	# Rebuild "$@" with the path operand replaced.
+	n=0
+	for arg do
+		n=$((n + 1))
+		if [ "$n" = "$index" ]; then
+			dest=$(remap "$arg")
+			[ "$dest" = "$(resolve "$arg")" ] || log "remapped $arg -> $dest"
+			mkdir -p "$(dirname "$dest")"
+			arg=$dest
+		fi
+		set -- "$@" "$arg"
+	done
+	shift "$n"
+	exec git worktree add "$@"
+}
+
+[ $# -ge 1 ] || usage
+sub=$1
+shift
+case $sub in
+add) cmd_add "$@" ;;
+path)
+	[ $# -eq 1 ] || usage
+	remap "$1"
+	;;
+*) usage ;;
+esac
