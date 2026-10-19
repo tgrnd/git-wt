@@ -162,7 +162,37 @@ check "git options before the subcommand are kept" eq \
 	"$(rewritten 'git -C "my app" -c core.x=y --no-pager worktree add wt/a')" \
 	'git -C "my app" -c core.x=y --no-pager wt add wt/a'
 check "a trailing bare add is rewritten" eq "$(rewritten 'git worktree add')" 'git wt add'
-check "other worktree subcommands are left alone" eq "$(rewritten 'git worktree list')" '<unchanged>'
+# The hook sees every Bash command; only `git [opts] worktree add` may change.
+for c in 'git worktree' 'git worktree list' 'git worktree list --porcelain' \
+	'git worktree remove wt/add' 'git worktree remove add' 'git worktree prune' \
+	'git worktree move wt/a wt/add' 'git worktree lock add' 'git worktree unlock wt/a' \
+	'git worktree repair' 'git -C repo worktree remove x' 'git log --grep add worktree' \
+	'git log worktree add' 'git commit -m "worktree add"' 'git worktree list | grep add' \
+	'echo worktree add' 'ls worktree/add' 'git worktrees add a' 'git worktree-add a' \
+	'git worktree "add" a' "git worktree list\\
+ add"; do
+	check "left alone: $c" eq "$(rewritten "$c")" '<unchanged>'
+done
+check "short git flags are skipped" eq "$(rewritten 'git -p worktree add a')" 'git -p wt add a'
+check "--git-dir with a separate value is skipped" eq \
+	"$(rewritten 'git --git-dir .git --work-tree=. worktree add a')" 'git --git-dir .git --work-tree=. wt add a'
+check "a continuation after add is kept" eq "$(rewritten "git worktree add\\
+ -b x a")" "git wt add\\
+ -b x a"
+check "continuations between git, options and worktree are allowed" eq "$(rewritten "git \\
+  -C repo \\
+  worktree \\
+  add a")" "git \\
+  -C repo wt add a"
+check "only the add in a list-then-add chain changes" eq \
+	"$(rewritten 'git worktree list && git worktree add a && git worktree prune')" \
+	'git worktree list && git wt add a && git worktree prune'
+check "a subshell or pipe start is a command boundary" eq \
+	"$(rewritten '(git worktree add a) | cat')" '(git wt add a) | cat'
+check "a quoted string starting with git is left alone" eq \
+	"$(rewritten 'echo "git worktree add a"')" '<unchanged>'
+check "known limit: quoted text after a separator is rewritten" eq \
+	"$(rewritten 'echo "x; git worktree add a"')" 'echo "x; git wt add a"'
 check "git wt add is left alone" eq "$(rewritten 'git wt add wt/a')" '<unchanged>'
 check "a longer word is not matched" eq "$(rewritten 'git worktree addx; mygit worktree add a')" '<unchanged>'
 check "GIT_WT_REMAP=0 disables the rewrite" eq \
@@ -182,6 +212,16 @@ check "hooks.json runs the hook from a plugin root with spaces" eq \
 	"$(jq -nc '{tool_input: {command: "git worktree add a"}}' |
 		CLAUDE_PLUGIN_ROOT="$tmp/plugin root" sh -c "$hookcmd" | jq -r '.hookSpecificOutput.updatedInput.command')" \
 	'git wt add a'
+
+# The plugin is self-contained: its WorktreeCreate hook uses the git-wt beside it.
+createcmd=$(jq -r '.hooks.WorktreeCreate[0].hooks[0].command' "$here/hooks/hooks.json")
+removecmd=$(jq -r '.hooks.WorktreeRemove[0].hooks[0].command' "$here/hooks/hooks.json")
+pcreated=$(jq -nc --arg cwd "$repo" '{session_id: "s", transcript_path: "/dev/null", cwd: $cwd, name: "via-plugin"}' |
+	PATH=$orig_path CLAUDE_PLUGIN_ROOT="$tmp/plugin root" sh -c "$createcmd" 2>>"$log")
+check "hooks.json WorktreeCreate works without git-wt on PATH" eq "$pcreated" "$bucket/via-plugin"
+jq -nc --arg p "$pcreated" '{worktree_path: $p}' |
+	CLAUDE_PLUGIN_ROOT="$tmp/plugin root" sh -c "$removecmd" 2>>"$log"
+check "hooks.json WorktreeRemove removes it" test ! -e "$pcreated"
 
 # jq alone, since its usual directory (e.g. /opt/homebrew/bin) may also hold git-wt.
 mkdir "$tmp/jq-only" && ln -s "$(command -v jq)" "$tmp/jq-only/jq"

@@ -1,11 +1,25 @@
 {
-  "description": "Send git worktree add through git wt add",
+  "description": "Create Claude Code's worktrees, and send git worktree add, through git wt add",
   "hooks": {
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/claude-worktree-create.sh" }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/claude-worktree-remove.sh" }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/claude-rewrite-worktree-add.sh", "timeout": 10 }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/claude-rewrite-worktree-add.sh", "timeout": 10 }
         ]
       }
     ]

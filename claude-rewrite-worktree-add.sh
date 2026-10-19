@@ -7,26 +7,35 @@
 # updatedInput only with "allow" (which would skip your permission rules) or "ask",
 # so you see and approve the rewritten command. Prints nothing when nothing changes.
 #
-# Matching is textual: an occurrence inside a quoted string (echo "git worktree add")
-# is rewritten too, and a command split across lines with \ is not matched.
+# Matching is textual: `git` must start the command or follow whitespace or one of
+# ; & | ( {, and only git options, whitespace and \ line continuations may sit
+# between git, worktree and add. Quoted text such as echo "x; git worktree add a"
+# is rewritten too.
 set -eu
 
 die() { printf 'claude-rewrite-worktree-add: %s\n' "$*" >&2; exit 1; }
 
-command -v jq >/dev/null 2>&1 || die "jq is required"
-
 input=$(cat)
-cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty') || die "hook input is not JSON"
-[ -n "$cmd" ] || exit 0
+# Every Bash command comes through here; skip the ones that can't match before
+# starting jq.
+case $input in *git*worktree*add*) ;; *) exit 0 ;; esac
 [ "${GIT_WT_REMAP:-1}" != 0 ] || exit 0
 
-sp='[[:space:]]'
-arg="(\"[^\"]*\"|'[^']*'|[^[:space:]\"']+)"
-# git's global options before the subcommand: -C <dir>, -c <k=v>, --long[=value]
-opts="($sp+-[cC]$sp+$arg|$sp+--[^[:space:]]+)*"
-# Groups: 1 = what precedes git, 2 = its options, 5 = what follows add.
-new=$(printf '%s\n' "$cmd" |
-	sed -E "s/(^|[;&|({[:space:]])git($opts)$sp+worktree$sp+add($sp|\$)/\\1git\\2 wt add\\5/g")
+command -v jq >/dev/null 2>&1 || die "jq is required"
+
+# Oniguruma regex (jq): (?:...) groups, named captures and lookahead keep this
+# readable, and it matches across the newlines of \ continuations.
+ws='(?:\s|\\\n)'
+arg="(?:\"[^\"]*\"|'[^']*'|[^\\s\"']+)"
+# git's global options: -C/-c/--git-dir/--work-tree/--namespace <value>, -<letter>,
+# or --long[=value].
+opt="(?:$ws+(?:-[cC]|--(?:git-dir|work-tree|namespace))$ws+$arg|$ws+-[A-Za-z]|$ws+--[^\\s]+)"
+re="(?<pre>^|[;&|({\\s])git(?<opts>$opt*)$ws+worktree$ws+add(?=\\s|\\\\|\$)"
+
+cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty') || die "hook input is not JSON"
+[ -n "$cmd" ] || exit 0
+new=$(printf '%s' "$input" | jq -r --arg re "$re" '.tool_input.command | gsub($re; "\(.pre)git\(.opts) wt add")') ||
+	die "rewriting the command failed"
 [ "$new" != "$cmd" ] || exit 0
 
 # The rewritten command runs in Claude's Bash tool, so git-wt must be on PATH there.
