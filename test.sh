@@ -98,6 +98,60 @@ check "a submodule uses the superproject's parent" eq \
 check "git wt add works in a submodule" test -f "$tmp/.worktrees/my app+libs+sub/wt/s/README"
 check "nothing is created inside the superproject" test ! -e "$repo/libs/sub/wt"
 
+echo '# --parent: a child worktree inside its own copy of the parent'
+git -C "$repo" commit -qm 'add sub' >>"$log" 2>&1 # the parent copy is made from HEAD
+wt_in() { (unset GIT_WT_HOME && cd "$1" && shift && git wt "$@") 2>>"$log"; }
+sub_home="$tmp/.worktrees/my app+libs+sub"
+check "path --parent names the child inside the parent copy" eq \
+	"$(wt_in "$repo/libs/sub" path --parent wt/p)" "$sub_home/wt/p/libs/sub"
+
+wt_in "$repo/libs/sub" add --parent -b pfeat wt/p >>"$log"
+check "the parent copy is checked out" test -f "$sub_home/wt/p/README"
+check "the parent copy is detached at the parent's HEAD" eq \
+	"$(git -C "$sub_home/wt/p" rev-parse HEAD):$(git -C "$sub_home/wt/p" branch --show-current)" \
+	"$(git -C "$repo" rev-parse HEAD):"
+check "the child is checked out inside it" test -f "$sub_home/wt/p/libs/sub/README"
+check "the child is on the new branch" eq "$(git -C "$sub_home/wt/p/libs/sub" branch --show-current)" pfeat
+check "the parent copy starts clean" eq "$(git -C "$sub_home/wt/p" status --porcelain)" ''
+git -C "$sub_home/wt/p/libs/sub" commit -q --allow-empty -m change >>"$log" 2>&1
+check "the parent copy sees the child as its submodule" eq \
+	"$(git -C "$sub_home/wt/p" status --porcelain)" ' M libs/sub'
+check "--parent creates nothing inside the superproject" test ! -e "$repo/libs/sub/wt"
+
+wt_in "$repo/vendor/inner" add --parent -b nfeat wt/n >>"$log"
+check "--parent works for a nested clone" test -f "$tmp/.worktrees/my app+vendor+inner/wt/n/vendor/inner/README"
+
+if wt_in "$repo" add --parent wt/x >>"$log"; then status=0; else status=1; fi
+check "--parent fails in a repo with no parent" eq "$status" 1
+check "... and creates nothing" test ! -e "$tmp/.worktrees/my app/wt/x"
+
+if wt_in "$repo/libs/sub" add --parent -b pfeat wt/p2 >>"$log"; then status=0; else status=1; fi
+check "a failed child add fails" eq "$status" 1
+check "... and removes the parent copy it made" test ! -e "$sub_home/wt/p2"
+check "... and unregisters it" not registered "$sub_home/wt/p2"
+
+echo '# git wt remove'
+wt_in "$repo/libs/sub" remove "$sub_home/wt/p/libs/sub" >>"$log"
+check "removing a child removes its parent copy" test ! -e "$sub_home/wt/p"
+check "... and unregisters both" eq \
+	"$(git -C "$repo" worktree list --porcelain | grep -cF "$sub_home/wt/p"):$(git -C "$repo/libs/sub" worktree list --porcelain | grep -cF "$sub_home/wt/p")" 0:0
+check "... and keeps the child's branch" git -C "$repo/libs/sub" rev-parse -q --verify refs/heads/pfeat
+
+wt_in "$repo/libs/sub" add --parent -b qfeat wt/q >>"$log"
+echo edit >>"$sub_home/wt/q/README"
+if (unset GIT_WT_HOME && cd "$repo/libs/sub" && git wt remove "$sub_home/wt/q/libs/sub") 2>"$tmp/rm.err"; then status=0; else status=1; fi
+check "edits in the parent copy stop the removal" eq "$status" 1
+check "... the error names the edited file" grep -q README "$tmp/rm.err"
+check "... and nothing is removed" test -f "$sub_home/wt/q/libs/sub/README"
+wt_in "$repo/libs/sub" remove --force "$sub_home/wt/q/libs/sub" >>"$log"
+check "--force removes both anyway" test ! -e "$sub_home/wt/q"
+
+wt_in "$repo/vendor/inner" remove "$tmp/.worktrees/my app+vendor+inner/wt/n/vendor/inner" >>"$log"
+check "removing a nested-clone child removes its parent copy" test ! -e "$tmp/.worktrees/my app+vendor+inner/wt/n"
+
+wt_in "$repo" remove "$bucket/wt/dd" >>"$log"
+check "a plain worktree is removed as git worktree remove would" test ! -e "$bucket/wt/dd"
+
 mkdir "$tmp/ro" && mkrepo "$tmp/ro/repo" && chmod 555 "$tmp/ro"
 if (unset GIT_WT_HOME && cd "$tmp/ro/repo" && git wt add wt/a) 2>"$tmp/ro.err"; then status=0; else status=1; fi
 chmod 755 "$tmp/ro"

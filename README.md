@@ -33,9 +33,31 @@ Or copy `git-wt` anywhere on your `PATH`; git runs `git-<name>` executables as `
 ## Usage
 
 ```sh
-git wt add [<git worktree add options>] <path> [<commit-ish>]
-git wt path <path>    # print where <path> would be created
+git wt add [--parent] [<git worktree add options>] <path> [<commit-ish>]
+git wt path [--parent] <path>     # print where <path> would be created
+git wt remove [--force] <path>    # git worktree remove, plus the parent copy if any
 ```
+
+### Submodules that need their parent
+
+A submodule (or nested clone) that only builds inside its parent, because it reads the
+parent's config, workspace or sibling packages, can't work from a lone worktree.
+`--parent` gives it a parent around it:
+
+```sh
+cd ~/Code/app/libs/sub
+git wt add --parent -b feat wt/a
+# parent copy: ~/Code/.worktrees/app+libs+sub/wt/a          (app, detached at its HEAD)
+# work in:     ~/Code/.worktrees/app+libs+sub/wt/a/libs/sub (sub, on feat)
+```
+
+The parent copy is an ordinary worktree of the parent; it sees the child as its
+submodule, so `git status` there shows ` M libs/sub` once the child has new commits.
+If adding the child fails, the parent copy is removed again.
+
+`git wt remove <child>` removes the child and then its parent copy. It refuses if the
+parent copy has changes of its own (besides the child), so nothing is lost; `--force`
+removes both anyway. On any other worktree it is plain `git worktree remove`.
 
 | Variable       | Default                    | Meaning                                         |
 | -------------- | -------------------------- | ----------------------------------------------- |
