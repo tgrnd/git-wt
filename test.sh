@@ -130,6 +130,26 @@ check "a failed child add fails" eq "$status" 1
 check "... and removes the parent copy it made" test ! -e "$sub_home/wt/p2"
 check "... and unregisters it" not registered "$sub_home/wt/p2"
 
+echo '# GIT_WT_PARENT: --parent by default'
+# In POSIX sh, VAR=x before a function call outlives the call, so set it in a subshell.
+parent_env() { (GIT_WT_PARENT=$1 && export GIT_WT_PARENT && shift && wt_in "$@"); }
+check "GIT_WT_PARENT=1 makes path act as --parent" eq \
+	"$(parent_env 1 "$repo/libs/sub" path wt/e)" "$sub_home/wt/e/libs/sub"
+check "--no-parent overrides it" eq \
+	"$(parent_env 1 "$repo/libs/sub" path --no-parent wt/e)" "$sub_home/wt/e"
+check "GIT_WT_PARENT=0 leaves it off" eq \
+	"$(parent_env 0 "$repo/libs/sub" path wt/e)" "$sub_home/wt/e"
+parent_env 1 "$repo/libs/sub" add -b efeat wt/e >>"$log"
+check "GIT_WT_PARENT=1 makes add check out the parent copy" test -d "$sub_home/wt/e/libs"
+check "... with the child inside it" eq "$(git -C "$sub_home/wt/e/libs/sub" branch --show-current)" efeat
+wt_in "$repo/libs/sub" remove "$sub_home/wt/e/libs/sub" >>"$log"
+parent_env 1 "$repo/libs/sub" add --no-parent -b ofeat wt/o >>"$log"
+check "add --no-parent overrides it" eq "$(git -C "$sub_home/wt/o" branch --show-current)" ofeat
+wt_in "$repo/libs/sub" remove "$sub_home/wt/o" >>"$log"
+if parent_env 1 "$repo" add wt/y >>"$log"; then status=0; else status=1; fi
+check "GIT_WT_PARENT=1 fails in a repo with no parent" eq "$status" 1
+check "... and creates nothing" test ! -e "$tmp/.worktrees/my app/wt/y"
+
 echo '# git wt remove'
 wt_in "$repo/libs/sub" remove "$sub_home/wt/p/libs/sub" >>"$log"
 check "removing a child removes its parent copy" test ! -e "$sub_home/wt/p"

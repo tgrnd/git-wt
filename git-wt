@@ -18,12 +18,13 @@
 # `git wt remove` removes such a pair together.
 #
 # Usage:
-#   git wt add [--parent] [<git worktree add options>] <path> [<commit-ish>]
-#   git wt path [--parent] <path>   print where <path> would be created
-#   git wt remove [--force] <path>  git worktree remove, plus the parent copy if any
+#   git wt add [--[no-]parent] [<git worktree add options>] <path> [<commit-ish>]
+#   git wt path [--[no-]parent] <path>   print where <path> would be created
+#   git wt remove [--force] <path>       git worktree remove, plus the parent copy if any
 #
 # Env:
 #   GIT_WT_HOME    one base folder for every repo's remapped worktrees
+#   GIT_WT_PARENT  set (not 0) to make --parent the default; --no-parent overrides it
 #   GIT_WT_REMAP   set to 0 to pass every path through unchanged
 set -eu
 
@@ -32,8 +33,8 @@ log() { printf 'git-wt: %s\n' "$*" >&2; }
 
 usage() {
 	cat >&2 <<-EOF
-	usage: git wt add [--parent] [<git worktree add options>] <path> [<commit-ish>]
-	       git wt path [--parent] <path>
+	usage: git wt add [--[no-]parent] [<git worktree add options>] <path> [<commit-ish>]
+	       git wt path [--[no-]parent] <path>
 	       git wt remove [--force] <path>
 	EOF
 	exit 2
@@ -151,20 +152,32 @@ remap() {
 plan_parent() {
 	child=$(main_root)
 	parent=$(parent_checkout "$child")
-	[ -n "$parent" ] || die "--parent needs a repo inside another checkout: $child"
+	[ -n "$parent" ] ||
+		die "--parent (or GIT_WT_PARENT) needs a repo inside another checkout: $child; use --no-parent"
 	copy=$(remap "$1")
 	dest=$copy/${child#"$parent"/}
 }
 
+# --parent unless GIT_WT_PARENT is unset, empty or 0.
+parent_default() {
+	case ${GIT_WT_PARENT:-0} in
+	0) with_parent=0 ;;
+	*) with_parent=1 ;;
+	esac
+}
+
 cmd_add() {
-	# --parent is ours, not git's: take it out before git sees the options.
-	with_parent=0 n=$# skip=0 opts_done=0
+	# --parent and --no-parent are ours, not git's: take them out before git sees
+	# the options.
+	parent_default
+	n=$# skip=0 opts_done=0
 	for arg do
 		if [ "$skip" = 1 ]; then
 			skip=0
 		elif [ "$opts_done" = 0 ]; then
 			case $arg in
 			--parent) with_parent=1; continue ;;
+			--no-parent) with_parent=0; continue ;;
 			--) opts_done=1 ;;
 			-b | -B | --reason) skip=1 ;;
 			esac
@@ -275,13 +288,16 @@ shift
 case $sub in
 add) cmd_add "$@" ;;
 path)
-	if [ "${1:-}" = --parent ]; then
-		shift
-		[ $# -eq 1 ] || usage
+	parent_default
+	case ${1:-} in
+	--parent) with_parent=1; shift ;;
+	--no-parent) with_parent=0; shift ;;
+	esac
+	[ $# -eq 1 ] || usage
+	if [ "$with_parent" = 1 ]; then
 		plan_parent "$1"
 		printf '%s\n' "$dest"
 	else
-		[ $# -eq 1 ] || usage
 		remap "$1"
 	fi
 	;;
