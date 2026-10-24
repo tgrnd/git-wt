@@ -13,6 +13,7 @@ pass through unchanged.
 | -------------------------------------- | ----------------------------------------- |
 | `~/Code/app`                           | `~/Code/.worktrees/app/wt/a`              |
 | `~/Code/app/vendor/lib` (nested clone) | `~/Code/.worktrees/app+vendor+lib/wt/a`   |
+| `~/Code/app/libs/sub` (submodule)      | `~/Code/.worktrees/app+libs+sub/wt/a`     |
 | any, with `GIT_WT_HOME=~/wt`           | `~/wt/app-<hash>/wt/a`                    |
 
 By default worktrees go in `.worktrees` beside the repo. A repo inside another checkout
@@ -32,13 +33,41 @@ Or copy `git-wt` anywhere on your `PATH`; git runs `git-<name>` executables as `
 ## Usage
 
 ```sh
-git wt add [<git worktree add options>] <path> [<commit-ish>]
-git wt path <path>    # print where <path> would be created
+git wt add [--[no-]parent] [<git worktree add options>] <path> [<commit-ish>]
+git wt path [--[no-]parent] <path>   # print where <path> would be created
+git wt remove [--force] <path>    # git worktree remove, plus the parent copy if any
 ```
+
+### Submodules that need their parent
+
+A submodule (or nested clone) that only builds inside its parent, because it reads the
+parent's config, workspace or sibling packages, can't work from a lone worktree.
+`--parent` gives it a parent around it:
+
+```sh
+cd ~/Code/app/libs/sub
+git wt add --parent -b feat wt/a
+# parent copy: ~/Code/.worktrees/app+libs+sub/wt/a          (app, detached at its HEAD)
+# work in:     ~/Code/.worktrees/app+libs+sub/wt/a/libs/sub (sub, on feat)
+```
+
+The parent copy is an ordinary worktree of the parent; it sees the child as its
+submodule, so `git status` there shows ` M libs/sub` once the child has new commits.
+If adding the child fails, the parent copy is removed again.
+
+For a repo that always needs its parent, set `GIT_WT_PARENT=1` where you work on it (for
+example in its `.envrc` with direnv, or in Claude Code's `env` for that project) and plain
+`git wt add` acts as `--parent`. `--no-parent` turns it off for one command. With it set,
+`git wt add` fails in a repo that has no parent checkout rather than falling back.
+
+`git wt remove <child>` removes the child and then its parent copy. It refuses if the
+parent copy has changes of its own (besides the child), so nothing is lost; `--force`
+removes both anyway. On any other worktree it is plain `git worktree remove`.
 
 | Variable       | Default                    | Meaning                                         |
 | -------------- | -------------------------- | ----------------------------------------------- |
 | `GIT_WT_HOME`  | unset: `.worktrees` beside the repo | One base folder for every repo's worktrees, as `<repo>-<hash>/<path>` |
+| `GIT_WT_PARENT` | unset                     | Set (not `0`): `add` and `path` act as `--parent` |
 | `GIT_WT_REMAP` | `1`                        | `0` passes every path through as given          |
 
 Up to v0.3.0 the default was `~/.claude/.worktrees`. To keep that layout, set

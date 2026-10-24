@@ -7,17 +7,24 @@
 # see an outer checkout. Paths outside every checkout pass through unchanged.
 #
 # By default it goes to <dir>/.worktrees/<repo>/<path relative to that checkout>, where
-# <dir> holds the repo. A repo inside another checkout (a clone inside a clone) uses
-# the folder holding the outermost checkout, and <repo> becomes its path from there
-# with / as + (app+vendor+lib). With GIT_WT_HOME set it goes to
+# <dir> holds the repo. A repo inside another checkout (a submodule, or a nested clone)
+# uses the folder holding the outermost checkout, and <repo> becomes its path from
+# there with / as + (super+libs+sub). With GIT_WT_HOME set it goes to
 # $GIT_WT_HOME/<repo>-<hash>/<path> instead.
 #
+# A child repo (submodule or nested clone) that needs its parent around it takes
+# --parent: the parent is checked out (detached at its HEAD) where the worktree would
+# have gone, and the child's worktree is added at its usual place inside that copy.
+# `git wt remove` removes such a pair together.
+#
 # Usage:
-#   git wt add [<git worktree add options>] <path> [<commit-ish>]
-#   git wt path <path>        print where <path> would be remapped to
+#   git wt add [--[no-]parent] [<git worktree add options>] <path> [<commit-ish>]
+#   git wt path [--[no-]parent] <path>   print where <path> would be created
+#   git wt remove [--force] <path>       git worktree remove, plus the parent copy if any
 #
 # Env:
 #   GIT_WT_HOME    one base folder for every repo's remapped worktrees
+#   GIT_WT_PARENT  set (not 0) to make --parent the default; --no-parent overrides it
 #   GIT_WT_REMAP   set to 0 to pass every path through unchanged
 set -eu
 
@@ -26,10 +33,19 @@ log() { printf 'git-wt: %s\n' "$*" >&2; }
 
 usage() {
 	cat >&2 <<-EOF
-	usage: git wt add [<git worktree add options>] <path> [<commit-ish>]
-	       git wt path <path>
+	usage: git wt add [--[no-]parent] [<git worktree add options>] <path> [<commit-ish>]
+	       git wt path [--[no-]parent] <path>
+	       git wt remove [--force] <path>
 	EOF
 	exit 2
+}
+
+# git run in folder $1 with no inherited repo, so it finds the repo there.
+git_in() {
+	(
+		unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
+		cd "$1" && shift && git "$@"
+	)
 }
 
 # Absolute, symlink-resolved form of $1, which need not exist yet: resolve the
@@ -48,24 +64,41 @@ resolve() {
 main_root() {
 	common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
 		die "not inside a git repository: $PWD"
-	[ "$(basename "$common")" = .git ] || die "bare repositories are not supported: $common"
-	(cd "$(dirname "$common")" && pwd -P)
+	if [ "$(basename "$common")" = .git ]; then
+		(cd "$(dirname "$common")" && pwd -P)
+		return
+	fi
+	# A submodule's git dir sits in the superproject's .git/modules, and its
+	# core.worktree points back at the checkout. A bare repo has no checkout.
+	checkout=$(git --git-dir="$common" rev-parse --show-toplevel 2>/dev/null) ||
+		die "bare repositories are not supported: $common"
+	(cd "$checkout" && pwd -P)
+}
+
+# The checkout directly holding checkout $1, or nothing.
+parent_checkout() {
+	outer=$(git_in "$(dirname "$1")" rev-parse --show-toplevel 2>/dev/null) || return 0
+	(cd "$outer" && pwd -P)
 }
 
 # The outermost checkout holding checkout $1: $1 itself unless it sits inside
-# another repo's working tree (a clone inside a clone).
+# another repo's working tree (a submodule, or a clone inside a clone).
 outermost() {
 	top=$1
 	while [ "$top" != / ]; do
-		outer=$(
-			unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
-			cd "$(dirname "$top")" && git rev-parse --show-toplevel 2>/dev/null
-		) || break
-		outer=$(cd "$outer" && pwd -P)
-		[ "$outer" != "$top" ] || break
+		outer=$(parent_checkout "$top")
+		[ -n "$outer" ] && [ "$outer" != "$top" ] || break
 		top=$outer
 	done
 	printf '%s\n' "$top"
+}
+
+# Whether $1 is the top of a linked worktree (not a repo's main checkout).
+is_linked() {
+	top=$(git_in "$1" rev-parse --show-toplevel 2>/dev/null) || return 1
+	[ "$(cd "$top" && pwd -P)" = "$1" ] || return 1
+	[ "$(git_in "$1" rev-parse --path-format=absolute --git-dir)" != \
+		"$(git_in "$1" rev-parse --path-format=absolute --git-common-dir)" ]
 }
 
 # The checkout containing $1 (main checkout or any linked worktree), or nothing.
@@ -90,7 +123,12 @@ remap() {
 		return
 	fi
 	root=$(main_root)
-	checkout=$(containing_checkout "$target")
+	# In a submodule, `git worktree list` may name the main worktree by its git
+	# dir (.git/modules/<path>), so check the main root directly.
+	case $target in
+	"$root"/*) checkout=$root ;;
+	*) checkout=$(containing_checkout "$target") ;;
+	esac
 	if [ -z "$checkout" ]; then
 		printf '%s\n' "$target"
 		return
@@ -108,7 +146,46 @@ remap() {
 	printf '%s/.worktrees/%s/%s\n' "$base" "$bucket" "$rel"
 }
 
+# For --parent with worktree path $1, set parent (the checkout directly holding
+# this repo), copy (where the parent is checked out: $1 remapped) and dest (this
+# repo's place inside the copy).
+plan_parent() {
+	child=$(main_root)
+	parent=$(parent_checkout "$child")
+	[ -n "$parent" ] ||
+		die "--parent (or GIT_WT_PARENT) needs a repo inside another checkout: $child; use --no-parent"
+	copy=$(remap "$1")
+	dest=$copy/${child#"$parent"/}
+}
+
+# --parent unless GIT_WT_PARENT is unset, empty or 0.
+parent_default() {
+	case ${GIT_WT_PARENT:-0} in
+	0) with_parent=0 ;;
+	*) with_parent=1 ;;
+	esac
+}
+
 cmd_add() {
+	# --parent and --no-parent are ours, not git's: take them out before git sees
+	# the options.
+	parent_default
+	n=$# skip=0 opts_done=0
+	for arg do
+		if [ "$skip" = 1 ]; then
+			skip=0
+		elif [ "$opts_done" = 0 ]; then
+			case $arg in
+			--parent) with_parent=1; continue ;;
+			--no-parent) with_parent=0; continue ;;
+			--) opts_done=1 ;;
+			-b | -B | --reason) skip=1 ;;
+			esac
+		fi
+		set -- "$@" "$arg"
+	done
+	shift "$n"
+
 	# Find the <path> operand: the first non-option argument. Options that take a
 	# separate value must skip it, or the value would be mistaken for the path.
 	n=0 index=0 skip=0 opts_done=0
@@ -135,16 +212,74 @@ cmd_add() {
 	for arg do
 		n=$((n + 1))
 		if [ "$n" = "$index" ]; then
-			dest=$(remap "$arg")
-			[ "$dest" = "$(resolve "$arg")" ] || log "remapped $arg -> $dest"
-			mkdir -p "$(dirname "$dest")" ||
-				die "cannot create $(dirname "$dest"); set GIT_WT_HOME to a writable folder"
+			if [ "$with_parent" = 1 ]; then
+				plan_parent "$arg"
+				home=$(dirname "$copy")
+			else
+				dest=$(remap "$arg")
+				[ "$dest" = "$(resolve "$arg")" ] || log "remapped $arg -> $dest"
+				home=$(dirname "$dest")
+			fi
+			mkdir -p "$home" || die "cannot create $home; set GIT_WT_HOME to a writable folder"
 			arg=$dest
 		fi
 		set -- "$@" "$arg"
 	done
 	shift "$n"
-	exec git worktree add "$@"
+	[ "$with_parent" = 1 ] || exec git worktree add "$@"
+
+	log "checking out the parent $parent at $copy"
+	git_in "$parent" worktree add --detach "$copy" HEAD ||
+		die "could not check out the parent at $copy"
+	if ! git worktree add "$@"; then
+		git_in "$parent" worktree remove --force "$copy" ||
+			log "could not remove the parent copy at $copy; remove it with git worktree remove"
+		die "could not add the worktree, so the parent copy was removed"
+	fi
+	log "work in $dest"
+}
+
+# git worktree remove with the worktree's own repo, from anywhere.
+remove_worktree() {
+	common=$(git_in "$1" rev-parse --path-format=absolute --git-common-dir)
+	(
+		unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
+		git --git-dir="$common" worktree remove ${force:+"$force"} "$1"
+	)
+}
+
+cmd_remove() {
+	force='' path=''
+	for arg do
+		case $arg in
+		-f | --force) force=--force ;;
+		-?*) die "unknown option: $arg" ;;
+		*) [ -z "$path" ] || usage; path=$arg ;;
+		esac
+	done
+	[ -n "$path" ] || usage
+	[ -d "$path" ] || die "no such worktree: $path"
+	wt=$(cd "$path" && pwd -P)
+	parent=$(parent_checkout "$wt")
+	# A pair is a linked worktree directly inside a linked worktree of another repo.
+	if [ -z "$parent" ] || ! is_linked "$wt" || ! is_linked "$parent"; then
+		exec git worktree remove ${force:+"$force"} "$path"
+	fi
+
+	# Check the parent copy first, so a refusal leaves both in place. The child
+	# shows up in it as a changed submodule or an untracked folder; skip that.
+	rel=${wt#"$parent"/}
+	if [ -z "$force" ]; then
+		dirty=$(git_in "$parent" status --porcelain --untracked-files=all --ignore-submodules=all |
+			grep -vxF "?? $rel/" || :)
+		[ -z "$dirty" ] || die "the parent copy $parent has changes; commit or discard them, or use --force:
+$dirty"
+	fi
+	remove_worktree "$wt"
+	# Removing the child took its folder with it; the parent copy expects it.
+	mkdir -p "$wt"
+	remove_worktree "$parent"
+	log "removed $wt and the parent copy $parent"
 }
 
 [ $# -ge 1 ] || usage
@@ -153,8 +288,19 @@ shift
 case $sub in
 add) cmd_add "$@" ;;
 path)
+	parent_default
+	case ${1:-} in
+	--parent) with_parent=1; shift ;;
+	--no-parent) with_parent=0; shift ;;
+	esac
 	[ $# -eq 1 ] || usage
-	remap "$1"
+	if [ "$with_parent" = 1 ]; then
+		plan_parent "$1"
+		printf '%s\n' "$dest"
+	else
+		remap "$1"
+	fi
 	;;
+remove) cmd_remove "$@" ;;
 *) usage ;;
 esac
