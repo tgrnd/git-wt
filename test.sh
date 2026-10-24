@@ -18,6 +18,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 export GIT_WT_HOME="$tmp/wt-home"
+export HOME="$tmp/home" # so no fallback can reach the real home
 export PATH="$here:$PATH"
 unset GIT_WT_REMAP
 log=$tmp/log
@@ -78,6 +79,30 @@ check "path after -- is remapped" test -d "$bucket/wt/dd"
 (cd "$bucket/wt/feat" && git wt add -b inner wt/inner) >>"$log" 2>&1
 check "path inside a linked worktree is remapped" test -d "$bucket/wt/inner"
 check "nothing is nested in the linked worktree" test ! -e "$bucket/wt/feat/wt"
+
+echo '# default home: .worktrees beside the outermost checkout'
+home_path() { (unset GIT_WT_HOME && cd "$1" && git wt path "$2") 2>>"$log"; }
+check "default home is ../.worktrees/<repo>" eq "$(home_path "$repo" wt/a)" "$tmp/.worktrees/my app/wt/a"
+check "default home from a linked worktree is the same" eq \
+	"$(home_path "$bucket/wt/feat" wt/b)" "$tmp/.worktrees/my app/wt/b"
+
+# A repo inside another checkout must not put .worktrees inside that checkout.
+mkrepo "$repo/vendor/inner"
+check "a nested repo uses the outermost checkout's parent" eq \
+	"$(home_path "$repo/vendor/inner" wt/a)" "$tmp/.worktrees/my app+vendor+inner/wt/a"
+
+git -C "$repo" -c protocol.file.allow=always submodule add -q "$repo/vendor/inner" libs/sub >>"$log" 2>&1
+check "a submodule uses the superproject's parent" eq \
+	"$(home_path "$repo/libs/sub" wt/a)" "$tmp/.worktrees/my app+libs+sub/wt/a"
+(unset GIT_WT_HOME && cd "$repo/libs/sub" && git wt add -b subwt wt/s) >>"$log" 2>&1
+check "git wt add works in a submodule" test -f "$tmp/.worktrees/my app+libs+sub/wt/s/README"
+check "nothing is created inside the superproject" test ! -e "$repo/libs/sub/wt"
+
+mkdir "$tmp/ro" && mkrepo "$tmp/ro/repo" && chmod 555 "$tmp/ro"
+if (unset GIT_WT_HOME && cd "$tmp/ro/repo" && git wt add wt/a) 2>"$tmp/ro.err"; then status=0; else status=1; fi
+chmod 755 "$tmp/ro"
+check "an unwritable default home fails" eq "$status" 1
+check "the failure points at GIT_WT_HOME" grep -q GIT_WT_HOME "$tmp/ro.err"
 
 echo '# PreToolUse rewrite hook'
 rewrite() {
