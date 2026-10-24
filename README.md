@@ -6,8 +6,21 @@ A worktree created inside a repository (`<repo>/wt/x`, `<repo>/.claude/worktrees
 under the outer checkout's `package.json`, `node_modules`, and tool configs. Anything that
 walks up the tree (Node module resolution, workspace detection, ESLint/TypeScript config
 lookup) sees the outer repo, and tools run in the outer repo scan the worktree as source.
-`git wt add` moves such paths to `$GIT_WT_HOME/<repo>-<hash>/<path>`; paths already
-outside every checkout pass through unchanged.
+`git wt add` moves such paths out of the checkout; paths already outside every checkout
+pass through unchanged.
+
+| Repo                                   | `git wt add wt/a` creates                 |
+| -------------------------------------- | ----------------------------------------- |
+| `~/Code/app`                           | `~/Code/.worktrees/app/wt/a`              |
+| `~/Code/app/vendor/lib` (nested clone) | `~/Code/.worktrees/app+vendor+lib/wt/a`   |
+| `~/Code/app/libs/sub` (submodule)      | `~/Code/.worktrees/app+libs+sub/wt/a`     |
+| any, with `GIT_WT_HOME=~/wt`           | `~/wt/app-<hash>/wt/a`                    |
+
+By default worktrees go in `.worktrees` beside the repo. A repo inside another checkout
+uses the folder beside the outermost one, so nothing lands inside a checkout. Git
+subtrees need nothing special: a subtree is part of the outer repo's history, not a repo
+of its own. If that folder isn't writable (say the repo is your home folder), `git wt add`
+fails and asks you to set `GIT_WT_HOME`.
 
 ## Install
 
@@ -24,10 +37,15 @@ git wt add [<git worktree add options>] <path> [<commit-ish>]
 git wt path <path>    # print where <path> would be created
 ```
 
-| Variable       | Default               | Meaning                               |
-| -------------- | --------------------- | ------------------------------------- |
-| `GIT_WT_HOME`  | `~/.claude/.worktrees` | Base folder for remapped worktrees    |
-| `GIT_WT_REMAP` | `1`                   | `0` passes every path through as given |
+| Variable       | Default                    | Meaning                                         |
+| -------------- | -------------------------- | ----------------------------------------------- |
+| `GIT_WT_HOME`  | unset: `.worktrees` beside the repo | One base folder for every repo's worktrees, as `<repo>-<hash>/<path>` |
+| `GIT_WT_REMAP` | `1`                        | `0` passes every path through as given          |
+
+Up to v0.3.0 the default was `~/.claude/.worktrees`. To keep that layout, set
+`GIT_WT_HOME=~/.claude/.worktrees`; worktrees already there keep working either way.
+In a sandboxed Claude Code session, `git wt add` can only write where the sandbox allows,
+so either allow the `.worktrees` folder or set `GIT_WT_HOME` in Claude Code's `env`.
 
 ## Claude Code plugin
 
