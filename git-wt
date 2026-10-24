@@ -2,17 +2,22 @@
 # git-wt: `git worktree add` that never nests a worktree inside a checkout.
 #
 # A worktree created inside the repo (e.g. <repo>/.claude/worktrees/x or <repo>/wt/x),
-# or inside one of its linked worktrees, is moved to
-# $GIT_WT_HOME/<repo>-<hash>/<path relative to that checkout>, so tools that walk up
-# the tree (Node module resolution, workspace detection, config lookup) never see an
-# outer checkout. Paths outside every checkout pass through unchanged.
+# or inside one of its linked worktrees, is moved out of the checkout, so tools that
+# walk up the tree (Node module resolution, workspace detection, config lookup) never
+# see an outer checkout. Paths outside every checkout pass through unchanged.
+#
+# By default it goes to <dir>/.worktrees/<repo>/<path relative to that checkout>, where
+# <dir> holds the repo. A repo inside another checkout (a clone inside a clone) uses
+# the folder holding the outermost checkout, and <repo> becomes its path from there
+# with / as + (app+vendor+lib). With GIT_WT_HOME set it goes to
+# $GIT_WT_HOME/<repo>-<hash>/<path> instead.
 #
 # Usage:
 #   git wt add [<git worktree add options>] <path> [<commit-ish>]
 #   git wt path <path>        print where <path> would be remapped to
 #
 # Env:
-#   GIT_WT_HOME    base for remapped worktrees (default: ~/.claude/.worktrees)
+#   GIT_WT_HOME    one base folder for every repo's remapped worktrees
 #   GIT_WT_REMAP   set to 0 to pass every path through unchanged
 set -eu
 
@@ -47,6 +52,22 @@ main_root() {
 	(cd "$(dirname "$common")" && pwd -P)
 }
 
+# The outermost checkout holding checkout $1: $1 itself unless it sits inside
+# another repo's working tree (a clone inside a clone).
+outermost() {
+	top=$1
+	while [ "$top" != / ]; do
+		outer=$(
+			unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
+			cd "$(dirname "$top")" && git rev-parse --show-toplevel 2>/dev/null
+		) || break
+		outer=$(cd "$outer" && pwd -P)
+		[ "$outer" != "$top" ] || break
+		top=$outer
+	done
+	printf '%s\n' "$top"
+}
+
 # The checkout containing $1 (main checkout or any linked worktree), or nothing.
 containing_checkout() {
 	git worktree list --porcelain | sed -n 's/^worktree //p' | while IFS= read -r wt; do
@@ -76,8 +97,15 @@ remap() {
 	fi
 	rel=${target#"$checkout"/}
 	rel=${rel#.claude/worktrees/}
-	hash=$(printf '%s' "$root" | shasum | cut -c1-8)
-	printf '%s/%s-%s/%s\n' "${GIT_WT_HOME:-$HOME/.claude/.worktrees}" "$(basename "$root")" "$hash" "$rel"
+	if [ -n "${GIT_WT_HOME:-}" ]; then
+		hash=$(printf '%s' "$root" | shasum | cut -c1-8)
+		printf '%s/%s-%s/%s\n' "$GIT_WT_HOME" "$(basename "$root")" "$hash" "$rel"
+		return
+	fi
+	base=$(dirname "$(outermost "$root")")
+	base=${base%/}
+	bucket=$(printf '%s' "${root#"$base"/}" | tr / +)
+	printf '%s/.worktrees/%s/%s\n' "$base" "$bucket" "$rel"
 }
 
 cmd_add() {
@@ -109,7 +137,8 @@ cmd_add() {
 		if [ "$n" = "$index" ]; then
 			dest=$(remap "$arg")
 			[ "$dest" = "$(resolve "$arg")" ] || log "remapped $arg -> $dest"
-			mkdir -p "$(dirname "$dest")"
+			mkdir -p "$(dirname "$dest")" ||
+				die "cannot create $(dirname "$dest"); set GIT_WT_HOME to a writable folder"
 			arg=$dest
 		fi
 		set -- "$@" "$arg"
