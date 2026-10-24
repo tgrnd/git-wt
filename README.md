@@ -13,6 +13,7 @@ pass through unchanged.
 | -------------------------------------- | ----------------------------------------- |
 | `~/Code/app`                           | `~/Code/.worktrees/app/wt/a`              |
 | `~/Code/app/vendor/lib` (nested clone) | `~/Code/.worktrees/app+vendor+lib/wt/a`   |
+| `~/Code/app/libs/sub` (submodule)      | `~/Code/.worktrees/app+libs+sub/wt/a`     |
 | any, with `GIT_WT_HOME=~/wt`           | `~/wt/app-<hash>/wt/a`                    |
 
 By default worktrees go in `.worktrees` beside the repo. A repo inside another checkout

@@ -7,9 +7,9 @@
 # see an outer checkout. Paths outside every checkout pass through unchanged.
 #
 # By default it goes to <dir>/.worktrees/<repo>/<path relative to that checkout>, where
-# <dir> holds the repo. A repo inside another checkout (a clone inside a clone) uses
-# the folder holding the outermost checkout, and <repo> becomes its path from there
-# with / as + (app+vendor+lib). With GIT_WT_HOME set it goes to
+# <dir> holds the repo. A repo inside another checkout (a submodule, or a nested clone)
+# uses the folder holding the outermost checkout, and <repo> becomes its path from
+# there with / as + (super+libs+sub). With GIT_WT_HOME set it goes to
 # $GIT_WT_HOME/<repo>-<hash>/<path> instead.
 #
 # Usage:
@@ -48,12 +48,19 @@ resolve() {
 main_root() {
 	common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
 		die "not inside a git repository: $PWD"
-	[ "$(basename "$common")" = .git ] || die "bare repositories are not supported: $common"
-	(cd "$(dirname "$common")" && pwd -P)
+	if [ "$(basename "$common")" = .git ]; then
+		(cd "$(dirname "$common")" && pwd -P)
+		return
+	fi
+	# A submodule's git dir sits in the superproject's .git/modules, and its
+	# core.worktree points back at the checkout. A bare repo has no checkout.
+	checkout=$(git --git-dir="$common" rev-parse --show-toplevel 2>/dev/null) ||
+		die "bare repositories are not supported: $common"
+	(cd "$checkout" && pwd -P)
 }
 
 # The outermost checkout holding checkout $1: $1 itself unless it sits inside
-# another repo's working tree (a clone inside a clone).
+# another repo's working tree (a submodule, or a clone inside a clone).
 outermost() {
 	top=$1
 	while [ "$top" != / ]; do
@@ -90,7 +97,12 @@ remap() {
 		return
 	fi
 	root=$(main_root)
-	checkout=$(containing_checkout "$target")
+	# In a submodule, `git worktree list` may name the main worktree by its git
+	# dir (.git/modules/<path>), so check the main root directly.
+	case $target in
+	"$root"/*) checkout=$root ;;
+	*) checkout=$(containing_checkout "$target") ;;
+	esac
 	if [ -z "$checkout" ]; then
 		printf '%s\n' "$target"
 		return
